@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>PV Forecast Upload</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 40px;
+        background: #f9f9f9;
+        color: #333;
+      }
+      h2,
+      h3 {
+        color: #444;
+      }
+      form,
+      #latestDoc,
+      #response,
+      #latestPrediction {
+        background: #fff;
+        padding: 20px;
+        margin-bottom: 20px;
+        border-radius: 10px;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+      }
+      label {
+        font-weight: bold;
+      }
+      input,
+      button {
+        padding: 8px;
+        margin-top: 5px;
+        border-radius: 6px;
+        border: 1px solid #ccc;
+      }
+      button {
+        background: #007bff;
+        color: white;
+        cursor: pointer;
+        border: none;
+        transition: 0.3s;
+      }
+      button:hover {
+        background: #0056b3;
+      }
+      img {
+        margin-top: 10px;
+        border-radius: 8px;
+        border: 1px solid #ddd;
+      }
+      .prediction {
+        color: #28a745;
+        font-weight: bold;
+        margin-top: 10px;
+      }
+      .error {
+        color: #dc3545;
+        font-weight: bold;
+      }
+    </style>
+  </head>
+  <body>
+    <h2>Upload PV Data</h2>
+    <form id="uploadForm" enctype="multipart/form-data">
+      <label>Image:</label>
+      <input type="file" name="image" required /><br /><br />
+
+      <label>PV Value (kW):</label>
+      <input type="number" name="pv" step="any" required /><br /><br />
+
+      <button type="submit">Upload</button>
+    </form>
+
+    <h3>Response:</h3>
+    <div id="response"></div>
+
+    <h3>Latest Document:</h3>
+    <div id="latestDoc"></div>
+    <button id="getLatestBtn">Get Latest Document</button>
+
+    <h3>Latest Prediction:</h3>
+    <div id="latestPrediction"></div>
+    <button id="getPredictionBtn">Get Latest Prediction</button>
+
+    <script>
+      const SERVER_URL = "http://localhost:5000"; // change if needed
+
+      const form = document.getElementById("uploadForm");
+      const responseBox = document.getElementById("response");
+      const latestDocBox = document.getElementById("latestDoc");
+      const predictionBox = document.getElementById("latestPrediction");
+      const getLatestBtn = document.getElementById("getLatestBtn");
+      const getPredictionBtn = document.getElementById("getPredictionBtn");
+
+      async function fetchLatest() {
+        try {
+          const res = await fetch(`${SERVER_URL}/latest`);
+          const data = await res.json();
+
+          if (data.error) {
+            latestDocBox.innerHTML = `<p class="error">Error Code: ${data.error}</p>`;
+          } else {
+            latestDocBox.innerHTML = `
+              <p><b>PV Value:</b> ${data.pv} kW</p>
+              ${
+                data.image
+                  ? `<img src="data:image/jpeg;base64,${data.image}" width="200"/>`
+                  : "<p>No image available.</p>"
+              }
+              <p><b>Created At:</b> ${new Date(
+                data.createdAt * 1000
+              ).toLocaleString()}</p>
+            `;
+          }
+        } catch (err) {
+          latestDocBox.innerHTML = `<p class="error">Failed to fetch latest document: ${err.message}</p>`;
+        }
+      }
+
+      async function fetchPrediction() {
+        try {
+          const res = await fetch(`${SERVER_URL}/latest-prediction`);
+          const data = await res.json();
+
+          if (data.error) {
+            predictionBox.innerHTML = `<p class="error">Error Code: ${data.error}</p>`;
+          } else if (
+            data.prediction !== null &&
+            data.prediction !== undefined
+          ) {
+            predictionBox.innerHTML = `<p class="prediction"><b>Latest Predicted PV:</b> ${data.prediction} kW</p>`;
+          } else {
+            predictionBox.innerHTML = `<p>No prediction available yet.</p>`;
+          }
+        } catch (err) {
+          predictionBox.innerHTML = `<p class="error">Failed to fetch prediction: ${err.message}</p>`;
+        }
+      }
+
+      // Upload handler
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const formData = new FormData(form);
+
+        try {
+          const res = await fetch(`${SERVER_URL}/upload`, {
+            method: "POST",
+            body: formData,
+          });
+
+          const data = await res.json();
+          let responseText = `<p>${data.message}</p>`;
+          responseText += `<p><b>Queue Size:</b> ${data.queueSize}</p>`;
+
+          if (data.note) {
+            responseText += `<p>${data.note}</p>`;
+          }
+          if (data.prediction !== undefined) {
+            responseText += `<p class="prediction"><b>Predicted PV:</b> ${data.prediction} kW</p>`;
+          }
+          if (data.error) {
+            responseText += `<p class="error">${data.error}</p>`;
+          }
+
+          responseBox.innerHTML = responseText;
+
+          // Auto-refresh latest doc and prediction after upload
+          fetchLatest();
+          fetchPrediction();
+        } catch (err) {
+          responseBox.innerHTML = `<p class="error">Upload failed: ${err.message}</p>`;
+        }
+      });
+
+      // Button handlers
+      getLatestBtn.addEventListener("click", fetchLatest);
+      getPredictionBtn.addEventListener("click", fetchPrediction);
+    </script>
+  </body>
+</html>

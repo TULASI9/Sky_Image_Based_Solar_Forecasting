@@ -1,0 +1,137 @@
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+
+// ---- LCD Config ----
+LiquidCrystal_I2C lcd(0x27, 16, 2);  // change 0x27 to 0x3F if your module uses that address
+
+// ---- Variables ----
+String wifiStatus = "";
+String serverResponse = "";
+String errorCode = "";
+String cameraStatus = "";
+String ipAddress = "";
+String unknownMsg = "";
+String predictionValue = "";
+
+bool awaitingJson = false;  // flag to combine server response lines
+
+// ---- ADC Config ----
+const int analogPin = A0;   // NodeMCU analog input pin
+float batteryVoltage = 0.0;
+float powerValue = 0.0;
+unsigned long lastSendTime = 0;
+const unsigned long sendInterval = 1000; // send every 1 second
+
+// ---- LCD message cycling ----
+unsigned long lastLcdSwitch = 0;
+const unsigned long lcdInterval = 3000;  // switch message every 3 sec
+int lcdState = 0;  // 0 = Wi-Fi, 1 = Server, 2 = PV
+
+// ---- ADC calibration (NodeMCU ESP8266) ----
+const float maxBatteryVoltage = 12.0;   // example: 12V battery with divider scaling to 1.0V
+const float adcReference = 1023.0;      // 10-bit ADC max value
+
+void setup() {
+  Serial.begin(115200);   // USB Serial Monitor / UART to ESP32-CAM
+  Serial.println("NodeMCU Ready...");
+
+  // LCD init
+  lcd.init();
+  lcd.backlight();
+  lcd.setCursor(0, 0);
+  lcd.print("Booting...");
+}
+
+void loop() {
+  // ---- Handle messages coming from ESP32-CAM ----
+  if (Serial.available()) {
+    String msg = Serial.readStringUntil('\n');  
+    msg.trim(); 
+
+    if (msg.indexOf("WiFi connected!") >= 0) {
+      wifiStatus = msg;   
+    } 
+    else if (msg.startsWith("IP address:")) {
+      ipAddress = msg;
+    }
+    else if (msg.indexOf("Server response:") >= 0) {
+      awaitingJson = true;  // expect JSON next
+      serverResponse = "Sent to server";   // simplified LCD message
+    }
+    else if (awaitingJson && msg.startsWith("{")) {
+      serverResponse = "Server OK";
+      int predIndex = msg.indexOf("\"prediction\":");
+      if (predIndex >= 0) {
+        predIndex += 13;
+        int endIndex = msg.indexOf("}", predIndex);
+        if (endIndex == -1) endIndex = msg.length();
+        predictionValue = msg.substring(predIndex, endIndex);
+        predictionValue.trim();
+      }
+      awaitingJson = false;
+    }
+    else if (msg.indexOf("Error code:") >= 0) {
+      errorCode = msg;
+      serverResponse = "Error Server";
+    }
+    else if (msg.indexOf("Camera") >= 0) {
+      cameraStatus = msg;
+    }
+    else {
+      unknownMsg = msg;
+    }
+  }
+
+  // ---- Periodically calculate and send power ----
+  unsigned long currentMillis = millis();
+  if (currentMillis - lastSendTime >= sendInterval) {
+    lastSendTime = currentMillis;
+    
+    int adcValue = analogRead(analogPin);  // 0–1023
+    batteryVoltage = (adcValue / adcReference) * maxBatteryVoltage;  // scaled battery voltage
+    powerValue = batteryVoltage * 1.0;     // P = V * I, I = 1A constant
+
+    // format as pv=<powerValue>
+    String pvMessage = "pv=" + String(powerValue, 2);  // 2 decimals
+    Serial.println(pvMessage);  // send to ESP32-CAM
+  }
+
+  // ---- LCD Update ----
+  if (millis() - lastLcdSwitch >= lcdInterval) {
+    lastLcdSwitch = millis();
+    lcd.clear();
+
+    if (lcdState == 0) {
+      // Show Wi-Fi status
+      lcd.setCursor(0, 0);
+      if (wifiStatus.length() > 0) lcd.print(wifiStatus);
+      else lcd.print("WiFi connecting...");
+      lcdState = 1;
+    }
+    else if (lcdState == 1) {
+      // Show server response
+      lcd.setCursor(0, 0);
+      if (serverResponse.length() > 0) lcd.print(serverResponse);
+      else lcd.print("No server resp");
+      lcdState = 2;
+    }
+    else if (lcdState == 2) {
+      // Show PV value
+      lcd.setCursor(0, 0);
+      lcd.print("PV=");
+      lcd.print(powerValue, 2);
+      lcd.print(" W");
+      lcdState = 0;
+    }
+
+    // Second row: Always show predicted PV
+    lcd.setCursor(0, 1);
+    if (predictionValue.length() > 0) {
+      lcd.print("Pred=");
+      lcd.print(predictionValue);
+    }
+    else {
+      lcd.print("Pred=--");
+    }
+  }
+}
